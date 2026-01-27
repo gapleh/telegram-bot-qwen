@@ -1,3 +1,11 @@
+> # Its been fun vibe coding here and there
+> # But we dont have to reinvent the wheel everywhere
+> # Go checkout: https://github.com/clawdbot/clawdbot
+
+> 2026-01-27
+
+---
+
 A simple Telegram Chatbot using OpenAI GPT models
 ---
 
