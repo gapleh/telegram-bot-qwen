@@ -1,11 +1,8 @@
-import argparse
-import json
-import logging
 import os
+import json
 import requests
-
 from telegram import Update
-from telegram.constants import ChatAction, ParseMode
+from telegram.constants import ChatAction
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -15,18 +12,20 @@ from telegram.ext import (
 )
 
 # ======================
-# ENV
+# ENV CHECK (STRICT)
 # ======================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
 
 if not TELEGRAM_TOKEN:
-    exit("🚨 TELEGRAM_TOKEN is not set")
-if not OPENAI_API_KEY:
-    exit("🚨 OPENAI_API_KEY is not set")
+    raise Exception("TELEGRAM_TOKEN not set")
+
+if not OPENAI_API_KEY.startswith("sk-"):
+    raise Exception(f"Invalid OPENAI_API_KEY loaded: {OPENAI_API_KEY}")
+
 if not OPENAI_BASE_URL:
-    exit("🚨 OPENAI_BASE_URL is not set")
+    raise Exception("OPENAI_BASE_URL not set")
 
 # ======================
 # SESSION
@@ -76,7 +75,7 @@ def error_handler(func):
     return wrapper
 
 # ======================
-# LITELLM CALL (FIXED)
+# LITELLM CALL (FIXED + SAFE)
 # ======================
 def call_llm(model, messages, temperature, max_tokens):
 
@@ -96,12 +95,17 @@ def call_llm(model, messages, temperature, max_tokens):
     if max_tokens:
         payload["max_tokens"] = max_tokens
 
-    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=120)
 
-    if r.status_code != 200:
-        raise Exception(r.text)
+        if not r.ok:
+            # DEBUG FULL ERROR
+            raise Exception(f"{r.status_code} | {r.text}")
 
-    return r.json()["choices"][0]["message"]["content"]
+        return r.json()["choices"][0]["message"]["content"]
+
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Request failed: {e}")
 
 # ======================
 # MESSAGE HANDLER
@@ -125,9 +129,17 @@ async def handle_message(update: Update, context: CallbackContext, session_id):
         "content": user_text
     })
 
+    # 🔥 IMPORTANT: inject system prompt
+    messages = [
+        {
+            "role": "system",
+            "content": session.get("system_prompt", "You are a helpful assistant.")
+        }
+    ] + session["chat_history"]
+
     response = call_llm(
         session["model"],
-        session["chat_history"],
+        messages,
         session["temperature"],
         session["max_tokens"]
     )
@@ -143,10 +155,10 @@ async def handle_message(update: Update, context: CallbackContext, session_id):
 # COMMANDS
 # ======================
 async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text("🚀 Bot is running!")
+    await update.message.reply_text("🚀 Bot is running with LiteLLM OK!")
 
 # ======================
-# REGISTER HANDLERS
+# REGISTER
 # ======================
 def register(app):
     app.add_handler(CommandHandler("start", start))
@@ -156,6 +168,10 @@ def register(app):
 # MAIN
 # ======================
 def main():
+    print("ENV CHECK:")
+    print("BASE_URL:", OPENAI_BASE_URL)
+    print("API_KEY:", OPENAI_API_KEY[:10], "...")
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     register(app)
 
